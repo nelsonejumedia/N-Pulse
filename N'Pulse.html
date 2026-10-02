@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>N'Pulse</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=DM+Sans:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#f7eef0;--card:#fff;--ink:#2a1530;--mute:#7b6680;--raw:#d9455f;--clean:#0f9a7a;--line:#e7d6dc;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1d1226;--card:#2a1a36;--ink:#f6e9ef;--mute:#b39cbc;--raw:#ff6b81;--clean:#7be0c3;--line:#40294f}}
+:root[data-theme="dark"]{--bg:#1d1226;--card:#2a1a36;--ink:#f6e9ef;--mute:#b39cbc;--raw:#ff6b81;--clean:#7be0c3;--line:#40294f}
+*{box-sizing:border-box}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"DM Sans",system-ui,sans-serif;line-height:1.45}
+main{max-width:520px;margin:0 auto;padding:20px 16px 40px}
+h1{font-family:Fraunces,Georgia,serif;font-size:34px;margin:0}
+.sub{color:var(--mute);margin:2px 0 18px}
+.hero{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:20px;text-align:center}
+.bpm{font-family:Fraunces,Georgia,serif;font-size:96px;line-height:1;margin:0;transition:transform .12s}
+.bpm.beat{transform:scale(1.05);color:var(--raw)}
+.unit{color:var(--mute);margin:0 0 4px}
+#status{min-height:22px;font-weight:600}
+.row{display:flex;gap:10px;margin:14px 0}
+button{flex:1;padding:14px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--ink);font:600 16px "DM Sans",system-ui,sans-serif}
+button.go{background:var(--raw);border-color:var(--raw);color:#fff}
+button:focus-visible{outline:3px solid var(--clean);outline-offset:2px}
+canvas{width:100%;display:block;background:var(--card);border:1px solid var(--line);border-radius:14px}
+h2{font-size:15px;margin:18px 0 6px}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px}
+.stat b{font-size:22px;display:block}.stat span{color:var(--mute);font-size:13px}
+.pipe{display:flex;flex-wrap:wrap;gap:6px;font-size:13px;color:var(--mute);margin-top:16px}
+.pipe i{font-style:normal;border:1px solid var(--line);border-radius:999px;padding:3px 10px;background:var(--card)}
+.pipe i.on{color:var(--ink);border-color:var(--clean)}
+video,#roi{display:none}
+.note{font-size:12.5px;color:var(--mute);margin-top:18px}
+</style></head><body><main>
+<h1>N'Pulse</h1>
+<p class="sub">Cover the rear camera and flash with your fingertip. Hold still for 20 seconds.</p>
+<section class="hero">
+<p class="bpm" id="bpm">--</p><p class="unit">beats per minute</p>
+<div id="status" aria-live="polite">Ready</div>
+</section>
+<div class="row"><button class="go" id="start">Start measuring</button><button id="demo">Run demo</button></div>
+<h2>Reconstructed PPG waveform</h2>
+<canvas id="wave" width="640" height="220"></canvas>
+<h2>Raw red channel</h2>
+<canvas id="rawc" width="640" height="110"></canvas>
+<div class="stats">
+<div class="stat"><b id="hrv">--</b><span>Pulse-rate variability (RMSSD, ms)</span></div>
+<div class="stat"><b id="q">--</b><span>Signal quality</span></div>
+</div>
+<div class="pipe" id="pipe"><i>Video</i><i>ROI</i><i>RGB mean</i><i>Normalize and denoise</i><i>Band-pass 0.7 to 3.5 Hz</i><i>PPG</i></div>
+<p class="note">N'Pulse is an educational rPPG prototype, not a medical device. Camera access may be blocked inside some embedded views; use Run demo to see the pipeline on a simulated signal.</p>
+<video id="v" playsinline muted></video><canvas id="roi" width="32" height="32"></canvas>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const wave=$('wave'),rawc=$('rawc'),wc=wave.getContext('2d'),rc=rawc.getContext('2d');
+const roi=$('roi'),rx=roi.getContext('2d',{willReadFrequently:true});
+let run=false,mode='',stream=null,t0=0,buf=[],lastBeat=0,st={};
+const WIN=10000; // ms of signal shown
+function css(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim()}
+function pipe(n){[...$('pipe').children].forEach((e,i)=>e.classList.toggle('on',i<=n))}
+function reset(){buf=[];st={hp1:0,hp2:0,lp1:0,lp2:0,mean:null,prev:0,prevT:0,sm:0};$('bpm').textContent='--';$('hrv').textContent='--';$('q').textContent='--'}
+// one-pole filter helpers using the real frame interval
+function a_lp(dt,fc){const r=2*Math.PI*fc*dt;return r/(r+1)}
+function process(t,x){
+  // normalize: remove slow illumination drift with running mean
+  const dt=st.prevT?(t-st.prevT)/1000:1/30;st.prevT=t;
+  if(st.mean===null)st.mean=x;
+  st.mean+=a_lp(dt,0.2)*(x-st.mean);
+  let n=x-st.mean;
+  // denoise: light smoothing
+  st.sm+=a_lp(dt,8)*(n-st.sm);
+  // band-pass: two low-pass stages at 3.5 Hz then subtract 0.7 Hz baseline
+  st.lp1+=a_lp(dt,3.5)*(st.sm-st.lp1);st.lp2+=a_lp(dt,3.5)*(st.lp1-st.lp2);
+  st.hp1+=a_lp(dt,0.7)*(st.lp2-st.hp1);
+  return st.lp2-st.hp1;
+}
+function analyze(){
+  const n=buf.length;if(n<90)return;
+  const now=buf[n-1].t,seg=buf.filter(p=>p.t>now-WIN);
+  const vals=seg.map(p=>p.y),m=vals.reduce((a,b)=>a+b,0)/vals.length;
+  const sd=Math.sqrt(vals.reduce((a,b)=>a+(b-m)**2,0)/vals.length)||1e-6;
+  const peaks=[];
+  for(let i=2;i<seg.length-2;i++){const y=seg[i].y;
+    if(y>seg[i-1].y&&y>=seg[i+1].y&&y>seg[i-2].y&&y>=seg[i+2].y&&y>0.4*sd&&(!peaks.length||seg[i].t-peaks[peaks.length-1]>350))peaks.push(seg[i].t)}
+  const iv=[];for(let i=1;i<peaks.length;i++)iv.push(peaks[i]-peaks[i-1]);
+  const good=iv.filter(v=>v>400&&v<1500);
+  if(good.length<4){return}
+  const med=[...good].sort((a,b)=>a-b)[Math.floor(good.length/2)];
+  const clean=good.filter(v=>Math.abs(v-med)<0.3*med);
+  const bpm=Math.round(60000/med);
+  let d=0;for(let i=1;i<clean.length;i++)d+=(clean[i]-clean[i-1])**2;
+  const rmssd=clean.length>2?Math.sqrt(d/(clean.length-1)):0;
+  const qual=Math.round(100*clean.length/good.length);
+  $('bpm').textContent=bpm;$('hrv').textContent=Math.round(rmssd);$('q').textContent=qual+'%';
+  const lp=peaks[peaks.length-1];
+  if(lp!==lastBeat){lastBeat=lp;$('bpm').classList.add('beat');setTimeout(()=>$('bpm').classList.remove('beat'),120)}
+}
+function draw(c,ctx,key,color){
+  const W=c.width,H=c.height;ctx.clearRect(0,0,W,H);
+  if(buf.length<2)return;
+  const now=buf[buf.length-1].t,seg=buf.filter(p=>p.t>now-WIN);
+  let lo=Infinity,hi=-Infinity;seg.forEach(p=>{const v=p[key];if(v<lo)lo=v;if(v>hi)hi=v});
+  const r=(hi-lo)||1;ctx.strokeStyle=color;ctx.lineWidth=2.5;ctx.lineJoin='round';ctx.beginPath();
+  seg.forEach((p,i)=>{const x=(p.t-(now-WIN))/WIN*W,y=H-8-(p[key]-lo)/r*(H-16);i?ctx.lineTo(x,y):ctx.moveTo(x,y)});
+  ctx.stroke();
+}
+function push(t,x){const y=process(t,x);buf.push({t,x,y});if(buf.length>1200)buf.shift();
+  draw(wave,wc,'y',css('--clean'));draw(rawc,rc,'x',css('--raw'));
+  if(buf.length%10===0)analyze();
+  const el=(t-t0)/1000;
+  if(mode==='cam'&&el>3&&el<20)$('status').textContent='Measuring... '+Math.max(0,Math.ceil(20-el))+'s';
+  else if(mode==='cam'&&el>=20)$('status').textContent='Reading is stable. Keep going or stop.';
+}
+function loopCam(){
+  if(!run||mode!=='cam')return;
+  const v=$('v');
+  if(v.readyState>=2){
+    rx.drawImage(v,0,0,roi.width,roi.height);
+    const d=rx.getImageData(8,8,16,16).data;let r=0,g=0,b=0,k=d.length/4;
+    for(let i=0;i<d.length;i+=4){r+=d[i];g+=d[i+1];b+=d[i+2]}
+    r/=k;g/=k;b/=k;
+    const covered=r>25&&r>1.25*g&&r>1.25*b;
+    if(covered){pipe(5);if(performance.now()-t0<3000)$('status').textContent='Fingertip detected. Hold still...';push(performance.now(),r)}
+    else{$('status').textContent='Cover the lens fully with your fingertip, pressing lightly (R '+Math.round(r)+', G '+Math.round(g)+', B '+Math.round(b)+')';pipe(1);t0=performance.now()}
+  }
+  requestAnimationFrame(loopCam);
+}
+async function startCam(){
+  stop();reset();
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){$('status').textContent='This view blocks camera access. Open the page in your browser directly, or try Run demo.';return}
+  $('status').textContent='Requesting camera access...';
+  try{
+    try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:320},height:{ideal:240},frameRate:{ideal:30}},audio:false})}
+    catch(e1){if(e1.name==='NotAllowedError'||e1.name==='SecurityError')throw e1;stream=await navigator.mediaDevices.getUserMedia({video:true,audio:false})}
+  }catch(e){
+    const n=e&&e.name;
+    $('status').textContent=(n==='NotAllowedError'||n==='SecurityError')
+      ?'Camera permission was blocked. Allow camera for this site in your browser settings, or open the page in its own browser tab.'
+      :(n==='NotFoundError'?'No camera found on this device.':'Camera error ('+(n||'unknown')+'). Try Run demo.');
+    return}
+  const tr=stream.getVideoTracks()[0];
+  try{await tr.applyConstraints({advanced:[{torch:true}]})}catch(e){}
+  const v=$('v');v.srcObject=stream;await v.play();
+  run=true;mode='cam';t0=performance.now();pipe(0);$('status').textContent='Place your fingertip over the camera';
+  $('start').textContent='Stop';requestAnimationFrame(loopCam);
+}
+function startDemo(){
+  stop();reset();run=true;mode='demo';t0=performance.now();pipe(5);$('status').textContent='Demo: simulated fingertip signal at about 72 bpm';
+  let i=0;const f0=1.2;
+  (function tick(){if(!run||mode!=='demo')return;
+    const t=performance.now(),s=(t-t0)/1000,hr=f0+0.05*Math.sin(s*0.3);
+    const ph=s*hr*2*Math.PI;
+    const pulse=Math.sin(ph)+0.35*Math.sin(2*ph-0.8);
+    const x=170+0.8*pulse+4*Math.sin(s*0.15)+0.3*(Math.random()-0.5);
+    push(t,x);setTimeout(tick,33)})();
+  $('start').textContent='Stop';
+}
+function stop(){run=false;mode='';if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}
+  $('start').textContent='Start measuring'}
+$('start').onclick=()=>run?(stop(),$('status').textContent='Stopped'):startCam();
+$('demo').onclick=startDemo;
+reset();
+</script></body></html>
