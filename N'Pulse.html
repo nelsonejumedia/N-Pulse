@@ -41,6 +41,7 @@ video,#roi{display:none}
 <div id="status" aria-live="polite">Ready</div>
 </section>
 <div class="row"><button class="go" id="start">Start measuring</button><button id="demo">Run demo</button></div>
+<button id="rep" class="go" style="display:none;width:100%;margin:0 0 6px">Download report</button>
 <h2>Reconstructed PPG waveform</h2>
 <canvas id="wave" width="640" height="220"></canvas>
 <h2>Raw red channel</h2>
@@ -61,7 +62,8 @@ let run=false,mode='',stream=null,t0=0,buf=[],lastBeat=0,st={};
 const WIN=10000; // ms of signal shown
 function css(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim()}
 function pipe(n){[...$('pipe').children].forEach((e,i)=>e.classList.toggle('on',i<=n))}
-function reset(){buf=[];st={hp1:0,hp2:0,lp1:0,lp2:0,mean:null,prev:0,prevT:0,sm:0};$('bpm').textContent='--';$('hrv').textContent='--';$('q').textContent='--'}
+let hist=[],last=null;
+function reset(){hist=[];last=null;$('rep').style.display='none';buf=[];st={hp1:0,hp2:0,lp1:0,lp2:0,mean:null,prev:0,prevT:0,sm:0};$('bpm').textContent='--';$('hrv').textContent='--';$('q').textContent='--'}
 // one-pole filter helpers using the real frame interval
 function a_lp(dt,fc){const r=2*Math.PI*fc*dt;return r/(r+1)}
 function process(t,x){
@@ -94,7 +96,7 @@ function analyze(){
   let d=0;for(let i=1;i<clean.length;i++)d+=(clean[i]-clean[i-1])**2;
   const rmssd=clean.length>2?Math.sqrt(d/(clean.length-1)):0;
   const qual=Math.round(100*clean.length/good.length);
-  $('bpm').textContent=bpm;$('hrv').textContent=Math.round(rmssd);$('q').textContent=qual+'%';
+  hist.push(bpm);last={bpm,rmssd:Math.round(rmssd),qual};$('bpm').textContent=bpm;$('hrv').textContent=Math.round(rmssd);$('q').textContent=qual+'%';
   const lp=peaks[peaks.length-1];
   if(lp!==lastBeat){lastBeat=lp;$('bpm').classList.add('beat');setTimeout(()=>$('bpm').classList.remove('beat'),120)}
 }
@@ -158,9 +160,76 @@ function startDemo(){
     push(t,x);setTimeout(tick,33)})();
   $('start').textContent='Stop';
 }
-function stop(){run=false;mode='';if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}
+function stop(){const was=run;run=false;mode='';if(was&&last&&buf.length>150)$('rep').style.display='block';if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}
   $('start').textContent='Start measuring'}
 $('start').onclick=()=>run?(stop(),$('status').textContent='Stopped'):startCam();
 $('demo').onclick=startDemo;
+
+function genReport(){
+ const avg=Math.round(hist.reduce((a,b)=>a+b,0)/hist.length),mn=Math.min(...hist),mx=Math.max(...hist);
+ const b=last.bpm,r=last.rmssd,q=last.qual,bi=b<60?0:b<=100?1:2,ri=r<20?0:r<=60?1:2;
+ const bT=['Your resting rate is below 60 bpm (bradycardia range). This is common and healthy in well-trained people and during sleep. If it comes with dizziness, fainting, chest pain or unusual tiredness, seek medical review.',
+ 'Your resting rate is within the normal adult range. Values in the lower half (60 to 80 bpm) are generally linked with good cardiovascular fitness. Caffeine, stress, poor sleep or recent activity can push it higher within the range.',
+ 'Your rate is above 100 bpm (tachycardia range). This is often temporary and can follow caffeine, anxiety, fever, dehydration or recent exertion. If it stays high at true rest, or comes with palpitations, breathlessness, chest pain or dizziness, seek medical review.'][bi];
+ const rT=['Variability is low. This is often linked with stress, fatigue, poor recovery or illness, and it tends to fall with age.',
+ 'Variability is in the range typical for many healthy adults.',
+ 'Variability is high. This is common in young or fit people. Values above about 100 ms from a phone camera are often inflated by timing error, so treat it as approximate.'][ri];
+ const qL=q>=80?'High':q>=50?'Moderate':'Low';
+ const now=new Date(),dur=Math.round((buf[buf.length-1].t-buf[0].t)/1000);
+ const seg=buf.filter(p=>p.t>buf[buf.length-1].t-WIN);let lo=1e9,hi=-1e9;seg.forEach(p=>{lo=Math.min(lo,p.y);hi=Math.max(hi,p.y)});
+ const pts=seg.map(p=>((p.t-seg[0].t)/WIN*600).toFixed(1)+','+(110-(p.y-lo)/((hi-lo)||1)*100).toFixed(1)).join(' ');
+ const h=(i,k)=>i===k?' class="me"':'';
+ const warn=(q<50?'<div class="warn">Signal quality was low, so these values are unreliable. Repeat the measurement with more light, light finger pressure and no movement.</div>':'')
+  +((b<40||b>150)?'<div class="warn">This rate is outside the range a phone camera usually measures reliably. Repeat the measurement before drawing conclusions.</div>':'');
+ return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>N'Pulse Report</title><style>
+body{font-family:Helvetica,Arial,sans-serif;color:#2a1530;max-width:760px;margin:30px auto;padding:0 20px;line-height:1.5}
+h1{margin:0;font-size:30px}h2{font-size:17px;border-bottom:2px solid #e7d6dc;padding-bottom:4px;margin-top:28px}
+.sub{color:#7b6680;margin:2px 0 18px}.big{display:flex;gap:14px;flex-wrap:wrap}
+.card{flex:1;min-width:150px;border:1px solid #e7d6dc;border-radius:12px;padding:12px;text-align:center}
+.card b{display:block;font-size:30px}.card span{font-size:12px;color:#7b6680}
+table{width:100%;border-collapse:collapse;font-size:14px}td,th{border:1px solid #e7d6dc;padding:7px 9px;text-align:left;vertical-align:top}
+th{background:#f7eef0}tr.me td{background:#e3f6f0;font-weight:bold}
+.warn{background:#fff1d6;border:1px solid #e9b949;border-radius:8px;padding:10px;margin:12px 0}
+.box{background:#f7eef0;border-radius:10px;padding:12px 14px}
+.fine{font-size:12px;color:#7b6680;margin-top:28px}svg{width:100%;height:auto;border:1px solid #e7d6dc;border-radius:10px}
+@media print{body{margin:0}}</style></head><body>
+<h1>N'Pulse Heart Rate Report</h1><p class="sub">${now.toLocaleString()} | Fingertip camera photoplethysmography (PPG)</p>${warn}
+<h2>Your results</h2><div class="big">
+<div class="card"><b>${b}</b><span>Final heart rate (bpm)</span></div>
+<div class="card"><b>${r}</b><span>Pulse-rate variability, RMSSD (ms)</span></div>
+<div class="card"><b>${q}%</b><span>Signal quality (${qL})</span></div></div>
+<h2>All parameters</h2><table>
+<tr><th>Parameter</th><th>Value</th></tr>
+<tr><td>Final heart rate</td><td>${b} bpm</td></tr>
+<tr><td>Average heart rate over the session</td><td>${avg} bpm</td></tr>
+<tr><td>Lowest and highest reading</td><td>${mn} to ${mx} bpm</td></tr>
+<tr><td>Pulse-rate variability (RMSSD)</td><td>${r} ms</td></tr>
+<tr><td>Signal quality</td><td>${q}% (${qL})</td></tr>
+<tr><td>Recording length</td><td>${dur} seconds</td></tr>
+<tr><td>Method</td><td>Fingertip video, mean red channel, normalization, denoising, band-pass filter 0.7 to 3.5 Hz, peak detection</td></tr></table>
+<h2>Reconstructed PPG waveform (last 10 seconds)</h2>
+<svg viewBox="0 0 600 120"><polyline points="${pts}" fill="none" stroke="#0f9a7a" stroke-width="2"/></svg>
+<h2>Resting heart rate ranges (adults)</h2><table>
+<tr><th>Range</th><th>Category</th><th>What it means</th></tr>
+<tr${h(bi,0)}><td>Below 60 bpm</td><td>Bradycardia range</td><td>Normal for athletes and during sleep. Review if there are symptoms.</td></tr>
+<tr${h(bi,1)}><td>60 to 100 bpm</td><td>Normal resting range</td><td>Expected for most healthy adults at rest.</td></tr>
+<tr${h(bi,2)}><td>Above 100 bpm</td><td>Tachycardia range</td><td>Often temporary. Review if it persists at rest or has symptoms.</td></tr></table>
+<h2>Pulse-rate variability ranges (RMSSD)</h2><table>
+<tr><th>Range</th><th>Category</th><th>What it means</th></tr>
+<tr${h(ri,0)}><td>Below 20 ms</td><td>Low</td><td>Linked with stress, fatigue, poor recovery or illness.</td></tr>
+<tr${h(ri,1)}><td>20 to 60 ms</td><td>Typical</td><td>Common in healthy adults.</td></tr>
+<tr${h(ri,2)}><td>Above 60 ms</td><td>High</td><td>Common in young or fit people. Phone-camera values above about 100 ms may be inflated.</td></tr></table>
+<h2>What your result suggests</h2><div class="box"><p><b>Heart rate (${b} bpm).</b> ${bT}</p><p><b>Variability (${r} ms).</b> ${rT}</p></div>
+<p class="fine">N'Pulse is an educational prototype and not a medical device. This report does not diagnose any condition and cannot replace advice from a qualified health professional. Ranges are general adult guides, and individual normal values vary with age, fitness, medication and health. A phone camera measures at about 30 frames per second, so variability values are approximate.</p>
+</body></html>`;
+}
+async function dl(){
+ const html=genReport(),d=new Date(),fn='NPulse-Report-'+d.toISOString().slice(0,16).replace(/[:T]/g,'-')+'.html';
+ let ok=false;
+ try{const c=window.claude&&await window.claude.use('downloads');if(c){await c.save({filename:fn,data:html});ok=true}}
+ catch(e){if(e&&e.code==='declined')return}
+ if(!ok){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([html],{type:'text/html'}));a.download=fn;document.body.appendChild(a);a.click();a.remove()}
+}
+$('rep').onclick=dl;
 reset();
 </script></body></html>
