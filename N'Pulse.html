@@ -14,15 +14,20 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:"DM Sans",system
 main{max-width:520px;margin:0 auto;padding:20px 16px 40px}
 h1{font-family:Fraunces,Georgia,serif;font-size:34px;margin:0}
 .sub{color:var(--mute);margin:2px 0 18px}
-.hero{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:20px;text-align:center}
-.bpm{font-family:Fraunces,Georgia,serif;font-size:96px;line-height:1;margin:0;transition:transform .12s}
-.bpm.beat{transform:scale(1.05);color:var(--raw)}
-.unit{color:var(--mute);margin:0 0 4px}
-#status{min-height:22px;font-weight:600}
+.hero{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:18px;text-align:center}
+.ringwrap{position:relative;width:190px;height:190px;margin:0 auto}
+.ring{width:100%;height:100%}.trk{fill:none;stroke:var(--line);stroke-width:7}
+.arc{fill:none;stroke:var(--raw);stroke-width:7;stroke-linecap:round;stroke-dasharray:339.3;stroke-dashoffset:339.3;transition:stroke-dashoffset .3s linear}
+.mid{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.bpm{font-family:Fraunces,Georgia,serif;font-size:64px;line-height:1;margin:0;transition:transform .12s}
+.bpm.beat{transform:scale(1.06);color:var(--raw)}
+.unit{color:var(--mute);margin:0}
+#status{min-height:44px;font-weight:600;margin-top:8px}
 .row{display:flex;gap:10px;margin:14px 0}
 button{flex:1;padding:14px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--ink);font:600 16px "DM Sans",system-ui,sans-serif}
 button.go{background:var(--raw);border-color:var(--raw);color:#fff}
-button:focus-visible{outline:3px solid var(--clean);outline-offset:2px}
+button:disabled{opacity:.45}
+button:focus-visible,input:focus-visible{outline:3px solid var(--clean);outline-offset:2px}
 canvas{width:100%;display:block;background:var(--card);border:1px solid var(--line);border-radius:14px}
 h2{font-size:15px;margin:18px 0 6px}
 .stats{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
@@ -33,11 +38,22 @@ h2{font-size:15px;margin:18px 0 6px}
 .pipe i.on{color:var(--ink);border-color:var(--clean)}
 video,#roi{display:none}
 .note{font-size:12.5px;color:var(--mute);margin-top:18px}
+.ov{position:fixed;inset:0;background:rgba(20,8,28,.65);display:none;align-items:center;justify-content:center;padding:16px;z-index:9}
+.ov.show{display:flex}
+.modal{background:var(--card);border:1px solid var(--line);border-radius:22px;padding:24px;width:100%;max-width:380px}
+.modal h3{font-family:Fraunces,Georgia,serif;font-size:24px;margin:0 0 4px}
+.modal p{color:var(--mute);margin:0 0 16px;font-size:14px}
+.modal label{display:block;font-weight:600;font-size:14px;margin:12px 0 6px}
+.modal input{width:100%;padding:13px;border-radius:12px;border:1px solid var(--line);background:var(--bg);color:var(--ink);font:600 18px "DM Sans",system-ui,sans-serif}
+.chips{display:flex;gap:8px}.chip{padding:12px 6px;font-size:14px}
+.chip[aria-pressed="true"]{background:var(--clean);border-color:var(--clean);color:#fff}
+#err{color:var(--raw);font-size:13px;min-height:18px;margin-top:6px}
 </style></head><body><main>
 <h1>N'Pulse</h1>
-<p class="sub">Cover the rear camera and flash with your fingertip. Hold still for 20 seconds.</p>
+<p class="sub">Cover the rear camera and flash with your fingertip. Hold still for about 35 seconds.</p>
 <section class="hero">
-<p class="bpm" id="bpm">--</p><p class="unit">beats per minute</p>
+<div class="ringwrap"><svg class="ring" viewBox="0 0 120 120" aria-hidden="true"><circle class="trk" cx="60" cy="60" r="54"/><circle id="arc" class="arc" cx="60" cy="60" r="54" transform="rotate(-90 60 60)"/></svg>
+<div class="mid"><p class="bpm" id="bpm">--</p><p class="unit">bpm</p></div></div>
 <div id="status" aria-live="polite">Ready</div>
 </section>
 <div class="row"><button class="go" id="start">Start measuring</button><button id="demo">Run demo</button></div>
@@ -51,82 +67,106 @@ video,#roi{display:none}
 <div class="stat"><b id="q">--</b><span>Signal quality</span></div>
 </div>
 <div class="pipe" id="pipe"><i>Video</i><i>ROI</i><i>RGB mean</i><i>Normalize and denoise</i><i>Band-pass 0.7 to 3.5 Hz</i><i>PPG</i></div>
-<p class="note">N'Pulse is an educational rPPG prototype, not a medical device. Camera access may be blocked inside some embedded views; use Run demo to see the pipeline on a simulated signal.</p>
+<p class="note">N'Pulse is an educational rPPG prototype, not a medical device. It uses the red channel and a chrominance (POS) method, and shows whichever gives the cleaner signal. Run demo shows the pipeline on a simulated signal.</p>
 <video id="v" playsinline muted></video><canvas id="roi" width="32" height="32"></canvas>
 </main>
+<div class="ov" id="ov"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="mt">
+<h3 id="mt">Before we start</h3>
+<p>Your age and sex help N'Pulse pick the right reference ranges for your report.</p>
+<label for="age">Age (years)</label>
+<input id="age" type="number" inputmode="numeric" min="1" max="120" placeholder="e.g. 24">
+<label id="sl">Sex</label>
+<div class="chips" role="group" aria-labelledby="sl">
+<button class="chip" data-v="Female" aria-pressed="false">Female</button>
+<button class="chip" data-v="Male" aria-pressed="false">Male</button>
+<button class="chip" data-v="Not stated" aria-pressed="false">Prefer not to say</button></div>
+<div id="err" aria-live="polite"></div>
+<div class="row" style="margin-bottom:0"><button id="cancel">Cancel</button><button class="go" id="go2" disabled>Continue</button></div>
+</div></div>
 <script>
 const $=id=>document.getElementById(id);
 const wave=$('wave'),rawc=$('rawc'),wc=wave.getContext('2d'),rc=rawc.getContext('2d');
 const roi=$('roi'),rx=roi.getContext('2d',{willReadFrequently:true});
-let run=false,mode='',stream=null,t0=0,buf=[],lastBeat=0,st={};
-const WIN=10000; // ms of signal shown
-function css(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim()}
-function pipe(n){[...$('pipe').children].forEach((e,i)=>e.classList.toggle('on',i<=n))}
-let hist=[],last=null;
-function reset(){hist=[];last=null;$('rep').style.display='none';buf=[];st={hp1:0,hp2:0,lp1:0,lp2:0,mean:null,prev:0,prevT:0,sm:0};$('bpm').textContent='--';$('hrv').textContent='--';$('q').textContent='--'}
-// one-pole filter helpers using the real frame interval
-function a_lp(dt,fc){const r=2*Math.PI*fc*dt;return r/(r+1)}
-function process(t,x){
-  // normalize: remove slow illumination drift with running mean
-  const dt=st.prevT?(t-st.prevT)/1000:1/30;st.prevT=t;
-  if(st.mean===null)st.mean=x;
-  st.mean+=a_lp(dt,0.2)*(x-st.mean);
-  let n=x-st.mean;
-  // denoise: light smoothing
-  st.sm+=a_lp(dt,8)*(n-st.sm);
-  // band-pass: two low-pass stages at 3.5 Hz then subtract 0.7 Hz baseline
-  st.lp1+=a_lp(dt,3.5)*(st.sm-st.lp1);st.lp2+=a_lp(dt,3.5)*(st.lp1-st.lp2);
-  st.hp1+=a_lp(dt,0.7)*(st.lp2-st.hp1);
-  return st.lp2-st.hp1;
+const WIN=10000,SETTLE=5000,MEAS=30000,L=45,CIRC=2*Math.PI*54;
+let run=false,mode='',stream=null,buf=[],lastBeat=0,act=0,lastT=0,weak=false,hist=[],last=null,S1,S2,PC=[],cor=0,dk='y1',prof=null,sx='';
+const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const pipe=n=>[...$('pipe').children].forEach((e,i)=>e.classList.toggle('on',i<=n));
+const ring=p=>{$('arc').style.strokeDashoffset=CIRC*(1-Math.max(0,Math.min(1,p)))};
+const al=(dt,fc)=>{const r=2*Math.PI*fc*dt;return r/(r+1)};
+const mk=()=>({mean:null,sm:0,lp1:0,lp2:0,hp1:0,pt:0});
+function filt(s,t,x){
+  const dt=s.pt?Math.min((t-s.pt)/1000,0.1):1/30;s.pt=t;
+  if(s.mean===null)s.mean=x;
+  s.mean+=al(dt,0.2)*(x-s.mean);
+  s.sm+=al(dt,8)*(x-s.mean-s.sm);
+  s.lp1+=al(dt,3.5)*(s.sm-s.lp1);s.lp2+=al(dt,3.5)*(s.lp1-s.lp2);
+  s.hp1+=al(dt,0.7)*(s.lp2-s.hp1);
+  return s.lp2-s.hp1;
+}
+// POS (plane-orthogonal-to-skin) chrominance projection over a sliding window
+function pos(r,g,b){
+  PC.push([r,g,b]);if(PC.length>L)PC.shift();if(PC.length<L)return 0;
+  const m=[0,1,2].map(i=>PC.reduce((a,c)=>a+c[i],0)/L||1),s1=[],s2=[];
+  for(const c of PC){const R=c[0]/m[0],G=c[1]/m[1],B=c[2]/m[2];s1.push(G-B);s2.push(-2*R+G+B)}
+  const sd=a=>{const u=a.reduce((x,y)=>x+y,0)/a.length;return Math.sqrt(a.reduce((x,y)=>x+(y-u)**2,0)/a.length)||1e-9};
+  const k=sd(s1)/sd(s2),h=s1.map((v,i)=>v+k*s2[i]),u=h.reduce((x,y)=>x+y,0)/L;
+  return h[L-1]-u;
+}
+function reset(){
+  hist=[];last=null;weak=false;buf=[];act=0;lastT=0;PC=[];cor=0;dk='y1';S1=mk();S2=mk();
+  $('rep').style.display='none';$('bpm').textContent='--';$('hrv').textContent='--';$('q').textContent='--';ring(0);
+}
+function est(key){
+  const now=buf[buf.length-1].t,seg=buf.filter(p=>p.t>now-WIN);
+  const v=seg.map(p=>p[key]),m=v.reduce((a,b)=>a+b,0)/v.length;
+  const sd=Math.sqrt(v.reduce((a,b)=>a+(b-m)**2,0)/v.length)||1e-6,pk=[];
+  for(let i=2;i<seg.length-2;i++){const y=seg[i][key];
+    if(y>seg[i-1][key]&&y>=seg[i+1][key]&&y>seg[i-2][key]&&y>=seg[i+2][key]&&y>0.4*sd&&(!pk.length||seg[i].t-pk[pk.length-1]>350))pk.push(seg[i].t)}
+  const iv=[];for(let i=1;i<pk.length;i++)iv.push(pk[i]-pk[i-1]);
+  const good=iv.filter(x=>x>400&&x<1500);if(good.length<5)return null;
+  const med=[...good].sort((a,b)=>a-b)[Math.floor(good.length/2)],cl=good.filter(x=>Math.abs(x-med)<0.3*med);
+  let d=0;for(let i=1;i<cl.length;i++)d+=(cl[i]-cl[i-1])**2;
+  return{key,bpm:Math.round(60000/med),rmssd:cl.length>2?Math.round(Math.sqrt(d/(cl.length-1))):0,qual:Math.round(100*cl.length/good.length),n:cl.length,lp:pk[pk.length-1]};
 }
 function analyze(){
-  const n=buf.length;if(n<90)return;
-  const now=buf[n-1].t,seg=buf.filter(p=>p.t>now-WIN);
-  const vals=seg.map(p=>p.y),m=vals.reduce((a,b)=>a+b,0)/vals.length;
-  const sd=Math.sqrt(vals.reduce((a,b)=>a+(b-m)**2,0)/vals.length)||1e-6;
-  const peaks=[];
-  for(let i=2;i<seg.length-2;i++){const y=seg[i].y;
-    if(y>seg[i-1].y&&y>=seg[i+1].y&&y>seg[i-2].y&&y>=seg[i+2].y&&y>0.4*sd&&(!peaks.length||seg[i].t-peaks[peaks.length-1]>350))peaks.push(seg[i].t)}
-  const iv=[];for(let i=1;i<peaks.length;i++)iv.push(peaks[i]-peaks[i-1]);
-  const good=iv.filter(v=>v>400&&v<1500);
-  if(good.length<4){return}
-  const med=[...good].sort((a,b)=>a-b)[Math.floor(good.length/2)];
-  const clean=good.filter(v=>Math.abs(v-med)<0.3*med);
-  const bpm=Math.round(60000/med);
-  let d=0;for(let i=1;i<clean.length;i++)d+=(clean[i]-clean[i-1])**2;
-  const rmssd=clean.length>2?Math.sqrt(d/(clean.length-1)):0;
-  const qual=Math.round(100*clean.length/good.length);
-  hist.push(bpm);last={bpm,rmssd:Math.round(rmssd),qual};$('bpm').textContent=bpm;$('hrv').textContent=Math.round(rmssd);$('q').textContent=qual+'%';
-  const lp=peaks[peaks.length-1];
-  if(lp!==lastBeat){lastBeat=lp;$('bpm').classList.add('beat');setTimeout(()=>$('bpm').classList.remove('beat'),120)}
+  if(buf.length<90)return;
+  const c=[est('y1'),est('y2')].filter(Boolean).sort((a,b)=>b.qual-a.qual||b.n-a.n)[0];
+  if(!c||c.qual<50||c.n<4){weak=true;$('bpm').textContent='--';$('hrv').textContent='--';$('q').textContent=c?c.qual+'%':'Low';return}
+  weak=false;dk=c.key;hist.push(c.bpm);
+  last={bpm:c.bpm,rmssd:c.rmssd,qual:c.qual,m:c.key==='y2'?'POS chrominance':'Red channel'};
+  $('bpm').textContent=c.bpm;$('hrv').textContent=c.rmssd;$('q').textContent=c.qual+'%';
+  if(c.lp!==lastBeat){lastBeat=c.lp;$('bpm').classList.add('beat');setTimeout(()=>$('bpm').classList.remove('beat'),120)}
 }
 function draw(c,ctx,key,color){
-  const W=c.width,H=c.height;ctx.clearRect(0,0,W,H);
-  if(buf.length<2)return;
+  const W=c.width,H=c.height;ctx.clearRect(0,0,W,H);if(buf.length<2)return;
   const now=buf[buf.length-1].t,seg=buf.filter(p=>p.t>now-WIN);
   let lo=Infinity,hi=-Infinity;seg.forEach(p=>{const v=p[key];if(v<lo)lo=v;if(v>hi)hi=v});
   const r=(hi-lo)||1;ctx.strokeStyle=color;ctx.lineWidth=2.5;ctx.lineJoin='round';ctx.beginPath();
-  seg.forEach((p,i)=>{const x=(p.t-(now-WIN))/WIN*W,y=H-8-(p[key]-lo)/r*(H-16);i?ctx.lineTo(x,y):ctx.moveTo(x,y)});
-  ctx.stroke();
+  seg.forEach((p,i)=>{const x=(p.t-(now-WIN))/WIN*W,y=H-8-(p[key]-lo)/r*(H-16);i?ctx.lineTo(x,y):ctx.moveTo(x,y)});ctx.stroke();
 }
-function push(t,x){const y=process(t,x);buf.push({t,x,y});if(buf.length>1200)buf.shift();
-  draw(wave,wc,'y',css('--clean'));draw(rawc,rc,'x',css('--raw'));
+function push(t,r,g,b){
+  act+=lastT?Math.min(t-lastT,100):0;lastT=t;
+  const y1=-filt(S1,t,r),p=filt(S2,t,pos(r,g,b));
+  cor=0.995*cor+y1*p;const y2=cor<0?-p:p;
+  if(act<SETTLE){ring(0);$('status').textContent='Settling the camera... '+Math.ceil((SETTLE-act)/1000)+'s';return}
+  buf.push({t,x:r,y1,y2});if(buf.length>1200)buf.shift();
+  draw(wave,wc,dk,css('--clean'));draw(rawc,rc,'x',css('--raw'));
   if(buf.length%10===0)analyze();
-  const el=(t-t0)/1000;
-  if(mode==='cam'&&el>3&&el<20)$('status').textContent='Measuring... '+Math.max(0,Math.ceil(20-el))+'s';
-  else if(mode==='cam'&&el>=20)$('status').textContent='Reading is stable. Keep going or stop.';
+  if(act>=SETTLE+MEAS){analyze();stop();ring(1);
+    $('status').textContent=last?'Measurement complete. Download your report below.':'Signal was too weak to give a result. Try again with more light and a steady finger.';return}
+  const rem=Math.ceil((SETTLE+MEAS-act)/1000);ring((act-SETTLE)/MEAS);
+  $('status').textContent=weak?'Signal too weak. Add light, press lightly, stay still. ('+rem+'s)':'Measuring... '+rem+'s';
 }
 function loopCam(){
   if(!run||mode!=='cam')return;
   const v=$('v');
   if(v.readyState>=2){
     rx.drawImage(v,0,0,roi.width,roi.height);
-    const d=rx.getImageData(8,8,16,16).data;let r=0,g=0,b=0,k=d.length/4;
+    const d=rx.getImageData(8,8,16,16).data,k=d.length/4;let r=0,g=0,b=0;
     for(let i=0;i<d.length;i+=4){r+=d[i];g+=d[i+1];b+=d[i+2]}
     r/=k;g/=k;b/=k;
-    const covered=r>25&&r>1.25*g&&r>1.25*b;
-    if(covered){pipe(5);if(performance.now()-t0<3000)$('status').textContent='Fingertip detected. Hold still...';push(performance.now(),r)}
-    else{$('status').textContent='Cover the lens fully with your fingertip, pressing lightly (R '+Math.round(r)+', G '+Math.round(g)+', B '+Math.round(b)+')';pipe(1);t0=performance.now()}
+    if(r>25&&r>1.25*g&&r>1.25*b){pipe(5);push(performance.now(),r,g,b)}
+    else{$('status').textContent='Cover the lens fully with your fingertip, pressing lightly (R '+Math.round(r)+', G '+Math.round(g)+', B '+Math.round(b)+')';pipe(1);lastT=0}
   }
   requestAnimationFrame(loopCam);
 }
@@ -139,48 +179,54 @@ async function startCam(){
     catch(e1){if(e1.name==='NotAllowedError'||e1.name==='SecurityError')throw e1;stream=await navigator.mediaDevices.getUserMedia({video:true,audio:false})}
   }catch(e){
     const n=e&&e.name;
-    $('status').textContent=(n==='NotAllowedError'||n==='SecurityError')
-      ?'Camera permission was blocked. Allow camera for this site in your browser settings, or open the page in its own browser tab.'
-      :(n==='NotFoundError'?'No camera found on this device.':'Camera error ('+(n||'unknown')+'). Try Run demo.');
+    $('status').textContent=(n==='NotAllowedError'||n==='SecurityError')?'Camera permission was blocked. Allow camera for this site in your browser settings, or open the page in its own browser tab.':(n==='NotFoundError'?'No camera found on this device.':'Camera error ('+(n||'unknown')+'). Try Run demo.');
     return}
-  const tr=stream.getVideoTracks()[0];
-  try{await tr.applyConstraints({advanced:[{torch:true}]})}catch(e){}
+  try{await stream.getVideoTracks()[0].applyConstraints({advanced:[{torch:true}]})}catch(e){}
   const v=$('v');v.srcObject=stream;await v.play();
-  run=true;mode='cam';t0=performance.now();pipe(0);$('status').textContent='Place your fingertip over the camera';
+  run=true;mode='cam';pipe(0);$('status').textContent='Place your fingertip over the camera';
   $('start').textContent='Stop';requestAnimationFrame(loopCam);
 }
 function startDemo(){
-  stop();reset();run=true;mode='demo';t0=performance.now();pipe(5);$('status').textContent='Demo: simulated fingertip signal at about 72 bpm';
-  let i=0;const f0=1.2;
+  stop();reset();run=true;mode='demo';pipe(5);$('start').textContent='Stop';
+  const t0=performance.now();
   (function tick(){if(!run||mode!=='demo')return;
-    const t=performance.now(),s=(t-t0)/1000,hr=f0+0.05*Math.sin(s*0.3);
-    const ph=s*hr*2*Math.PI;
-    const pulse=Math.sin(ph)+0.35*Math.sin(2*ph-0.8);
-    const x=170+0.8*pulse+4*Math.sin(s*0.15)+0.3*(Math.random()-0.5);
-    push(t,x);setTimeout(tick,33)})();
-  $('start').textContent='Stop';
+    const t=performance.now(),s=(t-t0)/1000,ph=s*(1.2+0.04*Math.sin(s*0.3))*2*Math.PI;
+    const pu=Math.sin(ph)+0.35*Math.sin(2*ph-0.8),n=()=>0.3*(Math.random()-0.5);
+    push(t,170+0.8*pu+4*Math.sin(s*0.15)+n(),62-0.9*pu+n(),48-0.5*pu+n());setTimeout(tick,33)})();
 }
-function stop(){const was=run;run=false;mode='';if(was&&last&&buf.length>150)$('rep').style.display='block';if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}
+function stop(){const was=run;run=false;mode='';
+  if(was&&last&&buf.length>150)$('rep').style.display='block';
+  if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}
   $('start').textContent='Start measuring'}
-$('start').onclick=()=>run?(stop(),$('status').textContent='Stopped'):startCam();
+// age and sex modal
+function syncChips(){document.querySelectorAll('.chip').forEach(c=>c.setAttribute('aria-pressed',c.dataset.v===sx))}
+function chk(){const a=+$('age').value,okA=Number.isInteger(a)&&a>=1&&a<=120;
+  $('go2').disabled=!(okA&&sx);$('err').textContent=($('age').value&&!okA)?'Enter a whole-number age between 1 and 120.':''}
+function openModal(){$('age').value=prof?prof.age:'';sx=prof?prof.sex:'';syncChips();chk();$('ov').classList.add('show');$('age').focus()}
+document.querySelectorAll('.chip').forEach(c=>c.onclick=()=>{sx=c.dataset.v;syncChips();chk()});
+$('age').oninput=chk;
+$('cancel').onclick=()=>$('ov').classList.remove('show');
+$('go2').onclick=()=>{prof={age:+$('age').value,sex:sx};$('ov').classList.remove('show');startCam()};
+$('start').onclick=()=>run?(stop(),$('status').textContent='Stopped'):openModal();
 $('demo').onclick=startDemo;
-
+// report
+const hrR=a=>a<3?[90,150]:a<6?[80,140]:a<12?[70,120]:[60,100];
+const hvR=a=>a<30?[30,80]:a<50?[20,60]:[15,45];
 function genReport(){
+ const age=prof?prof.age:null,sex=prof?prof.sex:'Not provided',[hl,hh]=hrR(age||30),[vl,vh]=hvR(age||30);
  const avg=Math.round(hist.reduce((a,b)=>a+b,0)/hist.length),mn=Math.min(...hist),mx=Math.max(...hist);
- const b=last.bpm,r=last.rmssd,q=last.qual,bi=b<60?0:b<=100?1:2,ri=r<20?0:r<=60?1:2;
- const bT=['Your resting rate is below 60 bpm (bradycardia range). This is common and healthy in well-trained people and during sleep. If it comes with dizziness, fainting, chest pain or unusual tiredness, seek medical review.',
- 'Your resting rate is within the normal adult range. Values in the lower half (60 to 80 bpm) are generally linked with good cardiovascular fitness. Caffeine, stress, poor sleep or recent activity can push it higher within the range.',
- 'Your rate is above 100 bpm (tachycardia range). This is often temporary and can follow caffeine, anxiety, fever, dehydration or recent exertion. If it stays high at true rest, or comes with palpitations, breathlessness, chest pain or dizziness, seek medical review.'][bi];
- const rT=['Variability is low. This is often linked with stress, fatigue, poor recovery or illness, and it tends to fall with age.',
- 'Variability is in the range typical for many healthy adults.',
- 'Variability is high. This is common in young or fit people. Values above about 100 ms from a phone camera are often inflated by timing error, so treat it as approximate.'][ri];
- const qL=q>=80?'High':q>=50?'Moderate':'Low';
- const now=new Date(),dur=Math.round((buf[buf.length-1].t-buf[0].t)/1000);
- const seg=buf.filter(p=>p.t>buf[buf.length-1].t-WIN);let lo=1e9,hi=-1e9;seg.forEach(p=>{lo=Math.min(lo,p.y);hi=Math.max(hi,p.y)});
- const pts=seg.map(p=>((p.t-seg[0].t)/WIN*600).toFixed(1)+','+(110-(p.y-lo)/((hi-lo)||1)*100).toFixed(1)).join(' ');
- const h=(i,k)=>i===k?' class="me"':'';
- const warn=(q<50?'<div class="warn">Signal quality was low, so these values are unreliable. Repeat the measurement with more light, light finger pressure and no movement.</div>':'')
-  +((b<40||b>150)?'<div class="warn">This rate is outside the range a phone camera usually measures reliably. Repeat the measurement before drawing conclusions.</div>':'');
+ const b=last.bpm,r=last.rmssd,q=last.qual,bi=b<hl?0:b<=hh?1:2,ri=r<vl?0:r<=vh?1:2;
+ const bT=[`Your resting rate is below the expected range for your age (${hl} to ${hh} bpm). This can be normal in well-trained people and during sleep. If it comes with dizziness, fainting, chest pain or unusual tiredness, seek medical review.`,
+ `Your resting rate is within the expected range for your age (${hl} to ${hh} bpm). Caffeine, stress, poor sleep or recent activity can push it toward the upper end, and regular fitness tends to lower it.`,
+ `Your rate is above the expected range for your age (${hl} to ${hh} bpm). This is often temporary and can follow caffeine, anxiety, fever, dehydration or recent exertion. If it stays high at true rest, or comes with palpitations, breathlessness, chest pain or dizziness, seek medical review.`][bi];
+ const rT=['Variability is low for your age group. This is often linked with stress, fatigue, poor recovery or illness.',
+ 'Variability is in the range typical for your age group.',
+ 'Variability is high for your age group. This is common in fit people, but phone-camera values above about 100 ms are often inflated by timing error, so treat it as approximate.'][ri];
+ const qL=q>=80?'High':'Moderate',now=new Date(),dur=Math.round((buf[buf.length-1].t-buf[0].t)/1000);
+ const seg=buf.filter(p=>p.t>buf[buf.length-1].t-WIN),k=last.m==='POS chrominance'?'y2':'y1';let lo=1e9,hi=-1e9;seg.forEach(p=>{lo=Math.min(lo,p[k]);hi=Math.max(hi,p[k])});
+ const pts=seg.map(p=>((p.t-seg[0].t)/WIN*600).toFixed(1)+','+(110-(p[k]-lo)/((hi-lo)||1)*100).toFixed(1)).join(' ');
+ const h=(i,j)=>i===j?' class="me"':'';
+ const warn=(!age?'<div class="warn">Age was not provided, so adult reference ranges were used.</div>':'')+((b<40||b>150)?'<div class="warn">This rate is outside the range a phone camera usually measures reliably. Repeat the measurement before drawing conclusions.</div>':'');
  return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>N'Pulse Report</title><style>
 body{font-family:Helvetica,Arial,sans-serif;color:#2a1530;max-width:760px;margin:30px auto;padding:0 20px;line-height:1.5}
 h1{margin:0;font-size:30px}h2{font-size:17px;border-bottom:2px solid #e7d6dc;padding-bottom:4px;margin-top:28px}
@@ -195,36 +241,38 @@ th{background:#f7eef0}tr.me td{background:#e3f6f0;font-weight:bold}
 @media print{body{margin:0}}</style></head><body>
 <h1>N'Pulse Heart Rate Report</h1><p class="sub">${now.toLocaleString()} | Fingertip camera photoplethysmography (PPG)</p>${warn}
 <h2>Your results</h2><div class="big">
-<div class="card"><b>${b}</b><span>Final heart rate (bpm)</span></div>
+<div class="card"><b>${b}</b><span>Heart rate (bpm)</span></div>
 <div class="card"><b>${r}</b><span>Pulse-rate variability, RMSSD (ms)</span></div>
 <div class="card"><b>${q}%</b><span>Signal quality (${qL})</span></div></div>
-<h2>All parameters</h2><table>
-<tr><th>Parameter</th><th>Value</th></tr>
+<h2>All parameters</h2><table><tr><th>Parameter</th><th>Value</th></tr>
+<tr><td>Age and sex</td><td>${age?age+' years':'Not provided'}, ${sex}</td></tr>
 <tr><td>Final heart rate</td><td>${b} bpm</td></tr>
 <tr><td>Average heart rate over the session</td><td>${avg} bpm</td></tr>
-<tr><td>Lowest and highest reading</td><td>${mn} to ${mx} bpm</td></tr>
+<tr><td>Lowest and highest valid reading</td><td>${mn} to ${mx} bpm</td></tr>
 <tr><td>Pulse-rate variability (RMSSD)</td><td>${r} ms</td></tr>
 <tr><td>Signal quality</td><td>${q}% (${qL})</td></tr>
-<tr><td>Recording length</td><td>${dur} seconds</td></tr>
-<tr><td>Method</td><td>Fingertip video, mean red channel, normalization, denoising, band-pass filter 0.7 to 3.5 Hz, peak detection</td></tr></table>
+<tr><td>Measured signal</td><td>${last.m}</td></tr>
+<tr><td>Recording length (after settling)</td><td>${dur} seconds</td></tr>
+<tr><td>Method</td><td>Fingertip video, RGB means, normalization, denoising, band-pass 0.7 to 3.5 Hz, peak detection</td></tr></table>
 <h2>Reconstructed PPG waveform (last 10 seconds)</h2>
 <svg viewBox="0 0 600 120"><polyline points="${pts}" fill="none" stroke="#0f9a7a" stroke-width="2"/></svg>
-<h2>Resting heart rate ranges (adults)</h2><table>
+<h2>Resting heart rate ranges for your age</h2><table>
 <tr><th>Range</th><th>Category</th><th>What it means</th></tr>
-<tr${h(bi,0)}><td>Below 60 bpm</td><td>Bradycardia range</td><td>Normal for athletes and during sleep. Review if there are symptoms.</td></tr>
-<tr${h(bi,1)}><td>60 to 100 bpm</td><td>Normal resting range</td><td>Expected for most healthy adults at rest.</td></tr>
-<tr${h(bi,2)}><td>Above 100 bpm</td><td>Tachycardia range</td><td>Often temporary. Review if it persists at rest or has symptoms.</td></tr></table>
-<h2>Pulse-rate variability ranges (RMSSD)</h2><table>
+<tr${h(bi,0)}><td>Below ${hl} bpm</td><td>Below expected</td><td>Normal for athletes and during sleep. Review if there are symptoms.</td></tr>
+<tr${h(bi,1)}><td>${hl} to ${hh} bpm</td><td>Expected range</td><td>Typical for healthy people of your age at rest.</td></tr>
+<tr${h(bi,2)}><td>Above ${hh} bpm</td><td>Above expected</td><td>Often temporary. Review if it persists at rest or has symptoms.</td></tr></table>
+<h2>Pulse-rate variability ranges for your age (approximate)</h2><table>
 <tr><th>Range</th><th>Category</th><th>What it means</th></tr>
-<tr${h(ri,0)}><td>Below 20 ms</td><td>Low</td><td>Linked with stress, fatigue, poor recovery or illness.</td></tr>
-<tr${h(ri,1)}><td>20 to 60 ms</td><td>Typical</td><td>Common in healthy adults.</td></tr>
-<tr${h(ri,2)}><td>Above 60 ms</td><td>High</td><td>Common in young or fit people. Phone-camera values above about 100 ms may be inflated.</td></tr></table>
-<h2>What your result suggests</h2><div class="box"><p><b>Heart rate (${b} bpm).</b> ${bT}</p><p><b>Variability (${r} ms).</b> ${rT}</p></div>
-<p class="fine">N'Pulse is an educational prototype and not a medical device. This report does not diagnose any condition and cannot replace advice from a qualified health professional. Ranges are general adult guides, and individual normal values vary with age, fitness, medication and health. A phone camera measures at about 30 frames per second, so variability values are approximate.</p>
+<tr${h(ri,0)}><td>Below ${vl} ms</td><td>Low</td><td>Linked with stress, fatigue, poor recovery or illness.</td></tr>
+<tr${h(ri,1)}><td>${vl} to ${vh} ms</td><td>Typical</td><td>Common in healthy people of your age.</td></tr>
+<tr${h(ri,2)}><td>Above ${vh} ms</td><td>High</td><td>Common in fit people. Phone-camera values above about 100 ms may be inflated.</td></tr></table>
+<h2>What your result suggests</h2><div class="box"><p><b>Heart rate (${b} bpm).</b> ${bT}</p><p><b>Variability (${r} ms).</b> ${rT}</p>
+<p>Average resting rates differ slightly between women and men, with women running a few beats per minute higher, so a small difference from the range is not unusual.</p></div>
+<p class="fine">N'Pulse is an educational prototype and not a medical device. This report does not diagnose any condition and cannot replace advice from a qualified health professional. Reference ranges are general guides and individual normal values vary with fitness, medication and health. A phone camera samples at about 30 frames per second, so variability values are approximate.</p>
 </body></html>`;
 }
 async function dl(){
- const html=genReport(),d=new Date(),fn='NPulse-Report-'+d.toISOString().slice(0,16).replace(/[:T]/g,'-')+'.html';
+ const html=genReport(),fn='NPulse-Report-'+new Date().toISOString().slice(0,16).replace(/[:T]/g,'-')+'.html';
  let ok=false;
  try{const c=window.claude&&await window.claude.use('downloads');if(c){await c.save({filename:fn,data:html});ok=true}}
  catch(e){if(e&&e.code==='declined')return}
